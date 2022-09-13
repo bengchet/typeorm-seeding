@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import ora from 'ora'
-import { DataSource } from 'typeorm'
+import { DataSource, InstanceChecker } from 'typeorm'
+import { importOrRequireFile } from 'typeorm/util/ImportUtils';
 import { Arguments, Argv, CommandModule, showHelp } from 'yargs'
 import { Seeder } from '../seeder'
 import { useSeeders } from '../helpers/useSeeders'
@@ -93,20 +94,23 @@ export class SeedCommand implements CommandModule {
   static async loadDataSource(dataSourceFilePath: string): Promise<DataSource> {
     let dataSourceFileExports
     try {
-      dataSourceFileExports = await import(dataSourceFilePath)
-    } catch (err) {
-      throw new Error(`Unable to open file: "${dataSourceFilePath}"`)
+      ;[dataSourceFileExports] = await importOrRequireFile(dataSourceFilePath)
+    } catch (err: any) {
+      throw new Error(`Unable to open file: "${dataSourceFilePath}". ${err.message}`)
     }
 
     if (!dataSourceFileExports || typeof dataSourceFileExports !== 'object') {
       throw new Error(`Given data source file must contain export of a DataSource instance`)
     }
 
-    const dataSourceExports: DataSource[] = []
-    for (const fileExport in dataSourceFileExports) {
-      const dataSourceExport = dataSourceFileExports[fileExport]
-      if (dataSourceExport instanceof DataSource) {
-        dataSourceExports.push(dataSourceExport)
+    const dataSourceExports = []
+    for (const fileExportKey in dataSourceFileExports) {
+      const fileExport = dataSourceFileExports[fileExportKey]
+      // It is necessary to await here in case of the exported async value (Promise<DataSource>).
+      // e.g. the DataSource is instantiated with an async factory in the source file
+      const awaitedFileExport = fileExport instanceof Promise ? await fileExport : fileExport
+      if (InstanceChecker.isDataSource(awaitedFileExport)) {
+        dataSourceExports.push(awaitedFileExport)
       }
     }
 
